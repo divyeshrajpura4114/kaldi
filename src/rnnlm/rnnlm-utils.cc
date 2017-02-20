@@ -235,78 +235,95 @@ void SampleWithoutReplacement(vector<std::pair<int, BaseFloat> > u, int n,
   }
 }
 
+// sort the prob pair vector in descending order
+bool sortReverse(std::pair<BaseFloat, int> a, std::pair<BaseFloat, int> b) {
+  return (a.first > b.first);
+}
+
+// sort the prob pair vector by the index 
+bool sortIndex(std::pair<BaseFloat, int> a, std::pair<BaseFloat, int> b) {
+  return (a.second < b.second);
+}
+
 void NormalizeVec(int k, const set<int>& ones, vector<BaseFloat> *probs) {
   KALDI_ASSERT(ones.size() < k);
   // first check the unigrams add up to 1
   BaseFloat sum = 0;
   for (int i = 0; i < probs->size(); i++) {
     sum += (*probs)[i];
+    (*probs)[i] *= k;
   }
   KALDI_ASSERT(ApproxEqual(sum, 1.0));
   
-//  set the 1s to be 10 to avoid numerical issues
+  // when k is equal to prob size 
+  if (k == probs->size()) {
+    for (int i = 0; i < probs->size(); i++) {
+      (*probs)[i] = 1.0;
+    }
+    return;
+  }
+  // set the 1s to be the maximum of the vector to avoid numerical issues
+  BaseFloat max = *max_element((*probs).begin(), (*probs).end());
   for (set<int>::const_iterator iter = ones.begin(); iter != ones.end(); iter++) {
-    sum -= (*probs)[*iter];
-    (*probs)[*iter] = 10;  // mark the ones
+    (*probs)[*iter] = max + 1;  // mark the ones
   }
 
-  // distribute the remaining probs
-  BaseFloat maxx = 0.0;
+  // get vector pair for the probs and the corresponding index
+  std::vector<std::pair<BaseFloat, int> > probs_pair;
   for (int i = 0; i < probs->size(); i++) {
-    BaseFloat t = (*probs)[i];
-    if (t < 5.0) {
-      maxx = std::max(maxx, t);
-    }
-  }
-
-//  KALDI_LOG << "sum should be smaller than 1.0, larger than 0.0: " << sum;
-//  KALDI_LOG << "max is " << maxx;
-//  KALDI_ASSERT(false);
-
-  if (maxx / sum * (k - ones.size()) <= 1.0) {
-//    KALDI_LOG << "no need to interpolate";
-    for (int i = 0; i < probs->size(); i++) {
-      BaseFloat &t = (*probs)[i];
-      if (t > 5.0) {
-        continue;
-      }
-      t = t * (k - ones.size()) * 1.0 / sum;
-    }
-  } else {
-//    KALDI_LOG << "need to interpolate";
-    // now we want to interpolate with a uniform prob of
-    // 1.0 / (probs->size() - ones.size()) * (k - ones.size()) s.t. max is 1
-    // (total prob = k - one.size() and we have probs->size() - ones.size() words)
-    // w a + (1 - w) b = 1
-    // ===> w = (1 - b) / (a - b)
-    BaseFloat a = maxx / sum * (k - ones.size());
-//    BaseFloat b = (k - ones.size()) / (probs->size() - ones.size());
-    BaseFloat b = 1.0 / (probs->size() - ones.size()) * (k - ones.size());
-    BaseFloat w = (1.0 - b) / (a - b);
-    KALDI_ASSERT(w >= 0.0 && w <= 1.0);
-
-    for (int i = 0; i < probs->size(); i++) {
-      BaseFloat &t = (*probs)[i];
-      if (t > 5.0) {
-        continue;
-      }
-      t = w * t / sum * (k - ones.size()) + (1.0 - w) * b;
-    }
-  }
-
-  for (set<int>::const_iterator iter = ones.begin(); iter != ones.end(); iter++) {
-    KALDI_ASSERT((*probs)[*iter] > 5.0);
-//    (*probs)[*iter] = 2.0;  // to avoid numerical issues
+    std::pair<BaseFloat, int> pair;
+    pair = std::make_pair((*probs)[i], i);
+    probs_pair.push_back(pair);
   }
   
-  sum = 0.0;
+  sort(probs_pair.begin(), probs_pair.end(), sortReverse);
+  
+  for (int i = 0; i < ones.size(); i++) {
+    if (ones.find(probs_pair[i].second) == ones.end()) {
+      KALDI_LOG << "Must sample item is not in the begining of the prob vector.";
+    }
+  } 
+  // compute sum of all probs
+  BaseFloat sum_to_allocate = k;
+  BaseFloat total_sum = 0;
+  for (int i = 0; i < probs_pair.size(); i++) {
+    total_sum += probs_pair[i].first;
+  }
+  
+  int i = 0;
+  for (; i < ones.size(); i++) {
+    total_sum -= probs_pair[i].first;
+    probs_pair[i].first = 1.1;
+    sum_to_allocate -= 1.0;
+  }
+
+  for (i = ones.size(); i < probs_pair.size(); i++ ) {
+    BaseFloat prob_tmp = probs_pair[i].first * 1.0 * sum_to_allocate/total_sum;
+    if (prob_tmp <= 1.0) {
+      for (int j = i; j < probs_pair.size(); j++) {
+        probs_pair[j].first *= 1.0 * sum_to_allocate/total_sum;
+      }
+      break;
+    } else {
+      total_sum -= probs_pair[i].first;
+      probs_pair[i].first = 1.0;
+      sum_to_allocate -= 1.0;
+    }
+  }
+  
+  // sort the prob pair vector by index
+  sort(probs_pair.begin(), probs_pair.end(), sortIndex);
+  
+  // update the output probs
   for (int i = 0; i < probs->size(); i++) {
-    BaseFloat t = (*probs)[i];
-    sum += std::min(BaseFloat(1.0), t);
-//    KALDI_LOG << "sum is " << sum;
+    (*probs)[i] = probs_pair[i].first;
+  }  
+
+  sum = 0;
+  for (int i = 0; i < probs->size(); i++ ) {
+    sum += std::min((*probs)[i], BaseFloat(1.0));
   }
   KALDI_ASSERT(ApproxEqual(sum, k));
-
 }
 
 void ComponentDotProducts(const LmNnet &nnet1,

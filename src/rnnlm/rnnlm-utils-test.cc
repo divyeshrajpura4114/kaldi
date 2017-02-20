@@ -97,6 +97,43 @@ void UnitTestSamplingConvergence() {
 }
 
 // test that probabilities 1.0 are always sampled
+void UnitTestNormalizeVec(int iters) {
+  // number of unigrams
+  int n = rand() % 1000 + 100;
+  // generate a must_sample_set with ones
+  int ones_size = rand() % (n / 2);
+  std::set<int> must_sample_set;
+  vector<BaseFloat> selection_probs;
+
+  PrepareVector(n, ones_size, &must_sample_set, &selection_probs);
+  
+  // generate a random number k from ones_size + 1 to n
+  int k = rand() % (n - ones_size) + ones_size + 1;
+  vector<BaseFloat> selection_probs_ref;
+  for (int i = 0; i < selection_probs.size(); i++) {
+    selection_probs_ref.push_back(selection_probs[i]);
+  }
+  NormalizeVec(k, must_sample_set, &selection_probs);
+
+  // test for NormalizeVec
+  for (int i = 0; i < selection_probs.size(); i++) {
+    for (int j = 0; j < selection_probs.size(); j++) {
+      if (must_sample_set.find(i) == must_sample_set.end() && must_sample_set.find(j) == must_sample_set.end()) {
+        if (selection_probs[i] == 1 && selection_probs[j] < 1) {
+          // BaseFloat diff = selection_probs[i] / selection_probs[j] - selection_probs_ref[i] / selection_probs_ref[j];
+          BaseFloat diff = selection_probs[i] / selection_probs_ref[i] - selection_probs[j] / selection_probs_ref[j];
+          if (diff > 0) {
+            KALDI_LOG << diff;
+            KALDI_ERR << "NormalizeVec test failed.";
+          }
+        }
+      }
+    }
+  }
+  KALDI_LOG << "NormalizeVec test is successful.";
+}
+
+// test that probabilities 1.0 are always sampled
 void UnitTestSampleWithProbOne(int iters) {
   // number of unigrams
   int n = rand() % 1000 + 100;
@@ -124,8 +161,7 @@ void UnitTestSampleWithProbOne(int iters) {
     if (must_sample_set.size() > 0) {
       // assert every item in must_sample_set is sampled
       for (set<int>::iterator it = must_sample_set.begin(); it != must_sample_set.end(); ++it) {
-        KALDI_ASSERT(std::find(samples.begin(), samples.end(), *it) !=
-            samples.end());
+        KALDI_ASSERT(std::find(samples.begin(), samples.end(), *it) != samples.end());
       }
     }
   }
@@ -172,6 +208,7 @@ int main() {
   using namespace kaldi;
   using namespace rnnlm;
   int N = 10000;
+  UnitTestNormalizeVec(N);
   UnitTestSampleWithProbOne(N);
   UnitTestSamplingTime(N);
   UnitTestSamplingConvergence();
