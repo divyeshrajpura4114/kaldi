@@ -119,7 +119,12 @@ void UnitTestNormalizeVec(int iters) {
   for (int i = 0; i < selection_probs.size(); i++) {
     for (int j = 0; j < selection_probs.size(); j++) {
       if (must_sample_set.find(i) == must_sample_set.end() && must_sample_set.find(j) == must_sample_set.end()) {
-        if (selection_probs[i] == 1 && selection_probs[j] < 1) {
+        if (selection_probs[i] < 1.0 && selection_probs[j] < 1.0) {
+          BaseFloat scalar_after = selection_probs[i]/selection_probs_ref[i];
+          BaseFloat scalar_before = selection_probs[j]/selection_probs_ref[j];
+          KALDI_ASSERT(ApproxEqual(scalar_after, scalar_before));
+        }
+        if (selection_probs[i] == 1.0 && selection_probs[j] < 1.0) {
           // BaseFloat diff = selection_probs[i] / selection_probs[j] - selection_probs_ref[i] / selection_probs_ref[j];
           BaseFloat diff = selection_probs[i] / selection_probs_ref[i] - selection_probs[j] / selection_probs_ref[j];
           if (diff > 0) {

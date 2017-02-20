@@ -255,20 +255,22 @@ void NormalizeVec(int k, const set<int>& ones, vector<BaseFloat> *probs) {
   }
   KALDI_ASSERT(ApproxEqual(sum, 1.0));
   
-  // when k is equal to prob size 
+  // when k is equal to the prob size, all output probs should be 1.0
   if (k == probs->size()) {
     for (int i = 0; i < probs->size(); i++) {
       (*probs)[i] = 1.0;
     }
     return;
   }
-  // set the 1s to be the maximum of the vector to avoid numerical issues
+  // set the probs of samples that are must be sampled to be the (maximum + 1) 
+  // of the vector to make sure that after sorted, those samples are
+  // in the leftmost of the prob vector
   BaseFloat max = *max_element((*probs).begin(), (*probs).end());
   for (set<int>::const_iterator iter = ones.begin(); iter != ones.end(); iter++) {
     (*probs)[*iter] = max + 1;  // mark the ones
   }
 
-  // get vector pair for the probs and the corresponding index
+  // get the probs and their corresponding indices
   std::vector<std::pair<BaseFloat, int> > probs_pair;
   for (int i = 0; i < probs->size(); i++) {
     std::pair<BaseFloat, int> pair;
@@ -276,27 +278,27 @@ void NormalizeVec(int k, const set<int>& ones, vector<BaseFloat> *probs) {
     probs_pair.push_back(pair);
   }
   
+  // sort all the probs 
   sort(probs_pair.begin(), probs_pair.end(), sortReverse);
   
-  for (int i = 0; i < ones.size(); i++) {
-    if (ones.find(probs_pair[i].second) == ones.end()) {
-      KALDI_LOG << "Must sample item is not in the begining of the prob vector.";
-    }
-  } 
-  // compute sum of all probs
   BaseFloat sum_to_allocate = k;
+  // compute sum of all probs
   BaseFloat total_sum = 0;
   for (int i = 0; i < probs_pair.size(); i++) {
     total_sum += probs_pair[i].first;
   }
   
+  // adjust probs of samples that are must sampled
   int i = 0;
   for (; i < ones.size(); i++) {
     total_sum -= probs_pair[i].first;
-    probs_pair[i].first = 1.1;
+    probs_pair[i].first = 1.001; // to avoid numerical issues
     sum_to_allocate -= 1.0;
   }
-
+  
+  // adjust probs of samples that are not must sampled
+  // case1: when scaled prob <= 1, renormalize the remaining probs and we are done
+  // case2: when scaled prob > 1, set it to 1 and update total_sum and sum_to_allocate 
   for (i = ones.size(); i < probs_pair.size(); i++ ) {
     BaseFloat prob_tmp = probs_pair[i].first * 1.0 * sum_to_allocate/total_sum;
     if (prob_tmp <= 1.0) {
@@ -311,14 +313,15 @@ void NormalizeVec(int k, const set<int>& ones, vector<BaseFloat> *probs) {
     }
   }
   
-  // sort the prob pair vector by index
+  // sort the prob pairs by index
   sort(probs_pair.begin(), probs_pair.end(), sortIndex);
   
   // update the output probs
   for (int i = 0; i < probs->size(); i++) {
     (*probs)[i] = probs_pair[i].first;
   }  
-
+  
+  // check the sum of scaled probs is k
   sum = 0;
   for (int i = 0; i < probs->size(); i++ ) {
     sum += std::min((*probs)[i], BaseFloat(1.0));
