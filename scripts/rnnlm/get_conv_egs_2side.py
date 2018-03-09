@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright  2017  Ke Li 
+# Copyright  2018  Ke Li 
 # License: Apache 2.0.
 
 import os
@@ -32,8 +32,6 @@ parser.add_argument("--smooth-unigram-counts", type=float, default=1.0,
                          "to every unigram counts.")
 parser.add_argument("--output-path", type=str, default='', required=True,
                     help="Specify the location of output files.")
-parser.add_argument("--two-side", type=str, default=False, required=True,
-                    help="True means training data contains both A->B and B->A.")
 parser.add_argument("text_dir",
                     help="Directory in which to look for data")
 
@@ -123,17 +121,17 @@ def read_vocab(vocab_file):
     return vocab
 
 def get_conv_counts(data_sources, data_weights, vocab):
-    fisher = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    fisher_sub = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    dev_fisher = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    swbd = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    swbd_sub = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    dev_swbd = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
+    fisher = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    fisher_sub = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    dev_fisher = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    swbd = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    swbd_sub = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    dev_swbd = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
     for name, (text_file, _) in data_sources.items():
         weight = data_weights[name][0] * data_weights[name][1]
         if weight == 0.0:
             continue
-
+        
         if name == "swbd":
             swbd = get_conv_swbd(text_file, weight, vocab)
         if name == "swbd_sub":
@@ -150,8 +148,23 @@ def get_conv_counts(data_sources, data_weights, vocab):
     return fisher, fisher_sub, dev_fisher, swbd, swbd_sub, dev_swbd
 
 def get_conv_fisher(filename, weight, vocab):
-    counts = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    # total_counts = defaultdict(lambda:defaultdict())
+    counts = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    num_sents_each_speaker = defaultdict(lambda:defaultdict(float))
+    # get number of utterances of each speaker
+    with open(filename, 'r', encoding="utf-8") as f:
+        for line in f:
+            fields = line.split()
+            if len(fields) < 2:
+                continue
+            if len(fields[0]) < 13:
+                print(fields[0])
+                continue
+            conv_id = fields[0][:11] # conversation id is "fe_0x_xxxxx"
+            speaker = fields[0][-2].lower() # fisher id is like "fe_03_00001_a:"
+            num_sents_each_speaker[conv_id][speaker] += 1.0
+    
+    sent_num = 0
+    pre_spk = 'a'
     with open(filename, 'r', encoding="utf-8") as f:
         for line in f:
             fields = line.split()
@@ -160,49 +173,15 @@ def get_conv_fisher(filename, weight, vocab):
                 continue
             if len(fields[0]) < 13:
                 continue
-            conv_id = fields[0][:11] # conversation id is "fe_0x_xxxxx"
-            speaker = fields[0][12].lower() # fisher id is like "fe_03_00001_a:"
-            assert speaker == 'a' or speaker == 'b'
-            for word in fields[1:]:
-                if word not in vocab:
-                    if args.unk_word == '':
-                        sys.exit(sys.argv[0] + ": error: an OOV word {0} is present in the "
-                             "text file {1} but you have not specified an unknown word to "
-                            "map it to (--unk-word option).".format(word, filename))
-                    else:
-                        word = args.unk_word
-                counts[conv_id][speaker][word] += 1.0
-                '''
-                if speaker == 'a':
-                    if speaker in total_counts[conv_id]:
-                        total_counts[conv_id][speaker] += 1
-                    else:
-                        total_counts[conv_id][speaker] = 1 
-                # this can be better
-                if speaker in total_counts[conv_id]:
-                    total_counts[conv_id][speaker] += 1
-                else:
-                    total_counts[conv_id][speaker] = 1 
-                '''
-    '''
-    # normalize training data with data_weight
-    for conv_id, speaker_map in counts.items():
-        for speaker, word_counts in speaker_map.items():
-            for word, count in word_counts.items():
-                counts[conv_id][speaker][word] = count * 1.0 / total_counts[conv_id][speaker]
-    '''
-    return counts
-
-def get_conv_swbd(filename, weight, vocab):
-    counts = defaultdict(lambda:defaultdict(lambda:defaultdict(float)))
-    # total_counts = defaultdict(lambda:defaultdict())
-    with open(filename, 'r', encoding="utf-8") as f:
-        for line in f:
-            fields = line.split()
-            assert len(fields) >= 2
-            conv_id = fields[0][:7] # conversation id is "swxxxxx" where xxx are numbers
-            speaker = fields[0][8].lower() # swbd id is like "sw04940-B_029056-029800"
-            assert speaker == 'a' or speaker == 'b'
+            conv_id = fields[0][:11] 
+            speaker = fields[0][-2].lower() 
+            if speaker != pre_spk:
+                sent_num = 0
+                pre_spk = speaker
+            key = speaker + "in"
+            if sent_num >= num_sents_each_speaker[conv_id][speaker]/2:
+                key = speaker + "ot"
+            sent_num += 1
             for word in fields[1:]:
                 if word not in vocab:
                     if args.unk_word == '':
@@ -211,73 +190,100 @@ def get_conv_swbd(filename, weight, vocab):
                                  "map it to (--unk-word option).".format(word, filename))
                     else:
                         word = args.unk_word
-                counts[conv_id][speaker][word] += 1.0
-                '''
-                if speaker == 'a':
-                    if speaker in total_counts[conv_id]:
-                        total_counts[conv_id][speaker] += 1 
+                counts[conv_id][speaker][key][word] += 1.0
+    return counts
+
+def get_conv_swbd(filename, weight, vocab):
+    counts = defaultdict(lambda:defaultdict(lambda:defaultdict(lambda:defaultdict(float))))
+    num_sents_each_speaker = defaultdict(lambda:defaultdict(float))
+    # get number of utterances of each speaker
+    with open(filename, 'r', encoding="utf-8") as f:
+        for line in f:
+            fields = line.split()
+            assert len(fields) >= 2
+            conv_id = fields[0][:7]
+            speaker = fields[0][8].lower() 
+            num_sents_each_speaker[conv_id][speaker] += 1.0
+    
+    sent_num = 0
+    pre_spk = 'a'
+    with open(filename, 'r', encoding="utf-8") as f:
+        for line in f:
+            fields = line.split()
+            assert len(fields) >= 2
+            conv_id = fields[0][:7] # conversation id is "swxxxxx" where xxx are numbers
+            speaker = fields[0][8].lower() # swbd id is like "sw04940-B_029056-029800"
+            if speaker != pre_spk:
+                sent_num = 0
+                pre_spk = speaker
+            key = speaker + "in"
+            if sent_num >= num_sents_each_speaker[conv_id][speaker]/2:
+                key = speaker + "ot"
+            sent_num += 1
+            for word in fields[1:]:
+                if word not in vocab:
+                    if args.unk_word == '':
+                        sys.exit(sys.argv[0] + ": error: an OOV word {0} is present in the "
+                                 "counts file {1} but you have not specified an unknown word to "
+                                 "map it to (--unk-word option).".format(word, filename))
                     else:
-                        total_counts[conv_id][speaker] = 1 
-                if speaker in total_counts[conv_id]:
-                    total_counts[conv_id][speaker] += 1 
-                else:
-                    total_counts[conv_id][speaker] = 1 
-                '''
-    '''
-    # normalize training data with data_weight but not labels
-    for conv_id, speaker_map in counts.items():
-        for speaker, word_counts in speaker_map.items():
-            for word, count in word_counts.items():
-                counts[conv_id][speaker][word] = count * 1.0 / total_counts[conv_id][speaker]
-    '''
+                        word = args.unk_word
+                counts[conv_id][speaker][key][word] += 1.0
     return counts
 
 def write_data_to_file(data_name, data):
     with open(args.output_path + "/" + data_name + ".txt", 'w', encoding='utf-8') as f, \
     open(args.output_path + "/" + data_name + ".label.txt", 'w', encoding='utf-8') as f1:
-        for conv_id, speaker in data.items():
-            for id, word_probs in speaker.items():
-                assert id == 'a' or id == 'b'
-                if id == 'a':
-                    f.write("[ ")
-                    for word, prob in word_probs.items():
-                        f.write(str(vocab[word]) + " " + str(prob) + " ")
-                    f.write("] ")
-                if id == 'b':
-                    f1.write("[ ")
-                    for word, prob in word_probs.items():
-                        f1.write(str(vocab[word]) + " " + str(prob) + " ")
-                    f1.write("] ")
-
-def write_data_to_file_2side(data_name, data):
-    with open(args.output_path + "/" + data_name + ".txt", 'w', encoding='utf-8') as f, \
-    open(args.output_path + "/" + data_name + ".label.txt", 'w', encoding='utf-8') as f1:
-        for conv_id, speaker in data.items():
-            for id, word_probs in speaker.items():
-                assert id == 'a' or id == 'b'
-                if id == 'a':
-                    f.write("[ ")
-                    for word, prob in word_probs.items():
-                        f.write(str(vocab[word]) + " " + str(prob) + " ")
-                    f.write("] ")
-                if id == 'b':
-                    f1.write("[ ")
-                    for word, prob in word_probs.items():
-                        f1.write(str(vocab[word]) + " " + str(prob) + " ")
-                    f1.write("] ")
-            for id, word_probs in speaker.items():
-                assert id == 'a' or id == 'b'
-                if id == 'b':
-                    f.write("[ ")
-                    for word, prob in word_probs.items():
-                        f.write(str(vocab[word]) + " " + str(prob) + " ")
-                    f.write("] ")
-                if id == 'a':
-                    f1.write("[ ")
-                    for word, prob in word_probs.items():
-                        f1.write(str(vocab[word]) + " " + str(prob) + " ")
-                    f1.write("] ")
-
+        for conv_id, speaker_map in data.items():
+            for spk, spk_map in speaker_map.items():
+                # case 1: the first half of utterances of speaker A as input, the second half as label
+                for key, word_probs in spk_map.items():
+                    if key == "ain":
+                        f.write("[ ")
+                        for word, prob in word_probs.items():
+                            f.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f.write("] ")
+                    if key == "aot":
+                        f1.write("[ ")
+                        for word, prob in word_probs.items():
+                            f1.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f1.write("] ")
+                # case 2: the first half of utterances of speaker B as input, the second half as label
+                for key, word_probs in spk_map.items():
+                    if key == "bin":
+                        f.write("[ ")
+                        for word, prob in word_probs.items():
+                            f.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f.write("] ")
+                    if key == "bot":
+                        f1.write("[ ")
+                        for word, prob in word_probs.items():
+                            f1.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f1.write("] ")
+                # reverse of case 1
+                for key, word_probs in spk_map.items():
+                    if key == "aot":
+                        f.write("[ ")
+                        for word, prob in word_probs.items():
+                            f.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f.write("] ")
+                    if key == "ain":
+                        f1.write("[ ")
+                        for word, prob in word_probs.items():
+                            f1.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f1.write("] ")
+                # reverse of case 2
+                for key, word_probs in spk_map.items():
+                    if key == "bot":
+                        f.write("[ ")
+                        for word, prob in word_probs.items():
+                            f.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f.write("] ")
+                    if key == "bin":
+                        f1.write("[ ")
+                        for word, prob in word_probs.items():
+                            f1.write(str(vocab[word]) + " " + str(prob) + " ")
+                        f1.write("] ")
 
 if os.system("rnnlm/ensure_counts_present.sh {0}".format(args.text_dir)) != 0:
     print(sys.argv[0] + ": command 'rnnlm/ensure_counts_present.sh {0}' failed.".format(
@@ -302,10 +308,6 @@ for name, (_, _) in data_sources.items():
         data = swbd_sub_input
     if name == "dev_swbd":
         data = dev_swbd_input 
-    if args.two_side == 'True':
-        write_data_to_file_2side(name, data)
-    else:
-        print("One side")
-        write_data_to_file(name, data)
+    write_data_to_file(name, data)
 
 print(sys.argv[0] + ": generated swbd and fisher data.", file=sys.stderr)

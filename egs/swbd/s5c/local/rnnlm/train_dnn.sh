@@ -6,20 +6,19 @@
 # Begin configuration section.
 
 dir=exp/dnn
-embedding_dim=1024
-lstm_rpd=256
-lstm_nrpd=256
+embedding_dim=512
 stage=-10
 train_stage=-10
-num_epochs=10
+num_epochs=30
 lr=0.01
 flr=0.001
-minibatch_size=128
+minibatch_size=8
 
 . ./cmd.sh
+. ./path.sh
 . ./utils/parse_options.sh
 
-text=data/train_nodev/text
+text=data/train/text
 text_dir=data/dnn/text
 mkdir -p $dir/config
 set -e
@@ -30,17 +29,16 @@ for f in $text; do
 done
 
 if [ $stage -le 0 ]; then
+  # prepare swbd data
   mkdir -p $text_dir
-  cat data/train_nodev/utt2spk | awk '{print $2}' > $text_dir/speaker
-  cat $text | cut -d ' ' -f2- > $text_dir/swbd0.txt
-  paste -d' ' $text_dir/speaker $text_dir/swbd0.txt > $text_dir/swbd_all.txt 
+  cp $text $text_dir/swbd_all.txt
   # get ~ 1/50 swbd data as dev data
-  head -n 5020 $text_dir/swbd_all.txt > $text_dir/dev_swbd.txt
-  tail -n +5021 $text_dir/swbd_all.txt > $text_dir/swbd.txt
+  head -n 5112 $text_dir/swbd_all.txt > $text_dir/dev_swbd.txt
+  tail -n +5113 $text_dir/swbd_all.txt > $text_dir/swbd.txt
   # get ~ 1/50 swbd data as training diagonistic data
-  tail -n 5792 $text_dir/swbd.txt > $text_dir/swbd_sub.txt
+  tail -n 5905 $text_dir/swbd.txt > $text_dir/swbd_sub.txt
 
-  rm $text_dir/swbd0.txt $text_dir/swbd_all.txt $text_dir/speaker
+  rm $text_dir/swbd_all.txt
 
   # prepare fisher data
   fisher_dirs="/export/corpora3/LDC/LDC2004T19/fe_03_p1_tran/ /export/corpora3/LDC/LDC2005T19/fe_03_p2_tran/"
@@ -66,7 +64,9 @@ if [ $stage -le 0 ]; then
 fi
 
 if [ $stage -le 1 ]; then
-  cp data/lang/words.txt $dir/config/
+  # cp data/lang/words.txt $dir/config/
+  wordlist=/export/b03/hxu/tf-pr/kaldi/egs/swbd/s5_8/data/lang/words.txt # 40k
+  cp $wordlist $dir/config/
   n=`cat $dir/config/words.txt | wc -l`
   echo "<brk> $n" >> $dir/config/words.txt
 
@@ -89,11 +89,13 @@ EOF
   # map words in train and dev texts into integers
   # read conversational counts into a dictionary
   # print out conversational word-count pairs into text files as input of get-eg. 
-  rnnlm/get_conv_egs.py --vocab-file=$dir/config/words.txt \
+  rnnlm/get_conv_egs_2side.py --vocab-file=$dir/config/words.txt \
                         --unk-word="<unk>" \
                         --data-weights-file=$dir/config/data_weights.txt \
                         --output-path=$dir/egs \
                         $text_dir 
+
+
   # get dev and train_subset (contain both swbd and fisher data)
   cat $dir/egs/swbd_sub.txt $dir/egs/fisher_sub.txt > $dir/egs/train_subset.txt
   cat $dir/egs/swbd_sub.label.txt $dir/egs/fisher_sub.label.txt > $dir/egs/train_subset.label.txt
@@ -103,7 +105,7 @@ EOF
 
   cat $dir/egs/swbd.txt $dir/egs/fisher.txt > $dir/egs/train.txt
   cat $dir/egs/swbd.label.txt $dir/egs/fisher.label.txt > $dir/egs/train.label.txt
-
+  
   cat >$dir/config/xconfig <<EOF
 input dim=$vocab_size name=input
 relu-renorm-layer name=tdnn1 dim=$embedding_dim input=Append(0)
@@ -112,7 +114,6 @@ output-layer name=output dim=$vocab_size
 EOF
 fi
 
-# affine-layer name=affine dim=$embedding_dim
 if [ $stage -le 2 ]; then
   echo "$0: initializing neural net"
   mkdir -p $dir/config/nnet
